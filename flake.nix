@@ -32,11 +32,12 @@
               packages = with pkgs; [ cargo-watch ];
 
               enterShell = "";
+              dotenv.enable = true;
 
               languages.rust = {
                 enable = true;
-                version = "stable";
-                packages = {
+                channel = "stable";
+                toolchain = {
                   rustfmt = inputs.fenix.packages.${pkgs.system}.latest.rustfmt;
                   clippy = inputs.fenix.packages.${pkgs.system}.latest.clippy;
                 };
