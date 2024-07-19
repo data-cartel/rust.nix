@@ -22,6 +22,7 @@
         channel = inputs.fenix.packages.${pkgs.system}.latest;
 
         hooks = {
+          actionlint.enable = true;
           taplo.enable = true;
           nixfmt = {
             enable = true;

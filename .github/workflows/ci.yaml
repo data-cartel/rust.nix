@@ -1,0 +1,32 @@
+name: "CI"
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+    - master
+
+jobs:
+  checks:
+    permissions:
+      checks: write
+      contents: read
+      id-token: write
+      packages: write
+      pull-requests: write
+      repository-projects: write
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: DeterminateSystems/nix-installer-action@main
+    - uses: DeterminateSystems/magic-nix-cache-action@main
+    - uses: DeterminateSystems/flake-checker-action@main
+
+    - name: Run Flake checks
+      run: nix -v flake check --show-trace --impure --accept-flake-config
