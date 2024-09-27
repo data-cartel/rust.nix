@@ -2,10 +2,13 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
     flake-utils.url = "github:numtide/flake-utils";
-    devenv.url = "github:cachix/devenv";
     pre-commit-hooks = {
       url = "github:cachix/pre-commit-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
+    };
+    devenv = {
+      url = "github:cachix/devenv";
+      inputs.pre-commit-hooks.follows = "pre-commit-hooks";
     };
 
     fenix = {
@@ -18,34 +21,30 @@
     { self, nixpkgs, flake-utils, devenv, pre-commit-hooks, fenix, ... }@inputs:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
-        channel = inputs.fenix.packages.${pkgs.system}.latest;
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ fenix.overlays.default ];
+        };
+        toolchain = fenix.packages.${system}.default;
 
         hooks = {
           actionlint.enable = true;
           taplo.enable = true;
-          nixfmt = {
-            enable = true;
-            package = pkgs.nixfmt-classic;
-          };
+          nixfmt-classic.enable = true;
           rustfmt = {
             enable = true;
-            packageOverrides = { inherit (channel) cargo rustfmt; };
+            packageOverrides = { inherit (toolchain) cargo rustfmt; };
           };
         };
 
       in {
-        packages = {
-          devenv-up = self.devShells.${system}.default.config.procfileScript;
-        };
-
         devShells = {
           default = devenv.lib.mkShell {
             inherit inputs pkgs;
             modules = [{
               # https://devenv.sh/reference/options/
               packages = with pkgs;
-                [ nil cargo-watch ] ++ lib.optionals stdenv.isDarwin
+                [ cargo-watch ] ++ lib.optionals stdenv.isDarwin
                 (with darwin.apple_sdk; [
                   libiconv
                   frameworks.Security
@@ -53,17 +52,22 @@
                   frameworks.SystemConfiguration
                 ]);
 
+              env.LOG_LEVEL = "DEBUG";
+
               languages.rust = {
                 enable = true;
                 channel = "stable";
-                toolchain = inputs.fenix.packages.${pkgs.system}.latest;
+                inherit toolchain;
               };
 
-              dotenv.enable = true;
               difftastic.enable = true;
-              pre-commit.hooks = hooks;
+              pre-commit = { inherit hooks; };
             }];
           };
+        };
+
+        packages = {
+          devenv-up = self.devShells.${system}.default.config.procfileScript;
         };
 
         checks = {
