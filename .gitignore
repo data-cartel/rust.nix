@@ -2,10 +2,22 @@
 .devenv
 .direnv
 .pre-commit-config.yaml
+result
+result-*
 
 # Rust
 /target
 
+# Generated agent skills (installed as symlinks on dev shell entry)
+/.claude/skills/gitbutler
+/.cursor/skills/gitbutler
+
 # Misc
 .env
 *.local
+*~
+.DS_Store
+*.log
+.worktrees/
+.tmp/
+.claude/skills/gitbutler

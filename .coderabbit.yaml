@@ -33,10 +33,9 @@ reviews:
     - path: "**/*.md"
       instructions: >-
         Focus on the contents of the docs and not on cosmetic things like markdown formatting. We
-        use markdown files for various docs including but not limited to the north star system
-        specification, SPEC.md, the plan for how to get there, ROADMAP.md, guidelines for AI
-        contributors, AGENTS.md, project overview and instructions for human contributors,
-        README.md. Think about the target audience of a document when deciding what comment to
+        use markdown files for various docs including specifications, roadmaps, guidelines for AI
+        contributors (AGENTS.md), and the project overview for human contributors (README.md).
+        Think about the target audience of a document when deciding what comment to
         leave. For specifications and designs, suggest potential product, architectural, and UI/UX
         improvements. For plans, suggest changes that would make things more parallelizable and
         deliverable-focused. For instructions, suggest better rules and guidelines and point out

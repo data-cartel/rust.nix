@@ -1,16 +1,27 @@
 {
+  description = "Rust project scaffold: devenv shell, crane builds, GitButler stacks, and CI";
+
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
 
     git-hooks.url = "github:cachix/git-hooks.nix";
     git-hooks.inputs.nixpkgs.follows = "nixpkgs";
 
     devenv.url = "github:cachix/devenv";
-    devenv.inputs.git-hooks.follows = "git-hooks";
+    devenv.inputs = {
+      nixpkgs.follows = "nixpkgs";
+      git-hooks.follows = "git-hooks";
+    };
 
-    fenix.url = "github:nix-community/fenix";
-    fenix.inputs.nixpkgs.follows = "nixpkgs";
+    rust-overlay.url = "github:oxalica/rust-overlay";
+    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
+
+    crane.url = "github:ipetkov/crane";
+
+    # The GitButler CLI (`but`) and its agent skill, shared across repos.
+    but-nix.url = "github:dataclique/but.nix";
+    but-nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -19,7 +30,9 @@
       nixpkgs,
       flake-utils,
       git-hooks,
-      fenix,
+      rust-overlay,
+      crane,
+      but-nix,
       ...
     }@inputs:
     flake-utils.lib.eachDefaultSystem (
@@ -27,23 +40,46 @@
       let
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [ fenix.overlays.default ];
+          overlays = [ rust-overlay.overlays.default ];
         };
-        toolchain = fenix.packages.${system}.default;
 
-        lib = import ./nix/lib.nix { inherit pkgs toolchain inputs; };
+        rustToolchain = pkgs.rust-bin.stable.latest.default;
+        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+        butLib = but-nix.lib.${system};
+
+        lib = import ./nix/lib.nix {
+          inherit
+            pkgs
+            rustToolchain
+            craneLib
+            butLib
+            inputs
+            ;
+        };
+
+        rustPkgs = import ./rust.nix { inherit (lib) mkRustPackages; };
       in
       {
         inherit lib;
 
         devShells.default = lib.mkDevShell { };
 
-        packages.devenv-up = self.devShells.${system}.default.config.procfileScript;
+        packages = {
+          default = rustPkgs.package;
+          rust-nix = rustPkgs.package;
+          inherit (butLib) pr-stack-footer;
+        };
 
+        # `cargo-test` and `cargo-clippy` are deliberately project-agnostic
+        # names: the CI workflow shipped by `templates.ci` builds them by
+        # name, so it works unchanged in any project using this scaffold.
         checks = {
-          pre-commit = git-hooks.lib.${system}.run {
-            src = ./.;
-            inherit (lib) hooks;
+          cargo-test = rustPkgs.test;
+          cargo-clippy = rustPkgs.clippy;
+
+          git-hooks = git-hooks.lib.${system}.run {
+            src = self;
+            hooks = lib.hooksForChecks;
           };
 
           # Enforce that the workflow shipped by `templates.ci` is
@@ -70,20 +106,33 @@
 
         rust = {
           path = ./.;
-          description = "Rust dev shell (devenv + fenix + pre-commit) with CI";
+          description = "Rust scaffold: devenv shell, crane builds, GitButler stacks, CI";
           welcomeText = ''
-            # Rust + Nix template
+            # Rust + Nix scaffold
 
             Next steps:
               1. `direnv allow` (or `nix develop --impure`) to enter the dev shell.
-              2. `cargo run` to verify the toolchain.
-              3. Edit `Cargo.toml` to set your crate name.
+              2. Set your crate name in `Cargo.toml`, and the matching `pname`
+                 in `rust.nix`.
+              3. `cargo run` to verify the toolchain.
+              4. Rewrite the `## Project Direction` section of `AGENTS.md` to
+                 describe your project. `CLAUDE.md` is a symlink to it.
 
-            Optional cleanup: this flake inherits a `templates` output
-            that re-exposes the project as a sub-template. If you don't
-            plan to re-expose templates from your project, you can
-            delete the `templates` block from `flake.nix`. It's
-            otherwise harmless.
+            What you get:
+              - A devenv shell with the stable Rust toolchain, cargo-nextest,
+                and pre-commit hooks (nil, nixfmt, actionlint, taplo, rustfmt).
+              - `nix build` / `.#checks.<system>.cargo-test` /
+                `.#checks.<system>.cargo-clippy` -- crane derivations that CI
+                builds by name.
+              - The GitButler CLI (`but`) on PATH, its agent skill installed
+                into `.claude/skills` and `.cursor/skills` on shell entry, and
+                `nix run .#pr-stack-footer` to refresh stacked-PR footers.
+
+            Optional cleanup: this flake inherits a `templates` output that
+            re-exposes the project as a sub-template, along with the
+            `ci-template-mirror` check and the `templates/` directory that
+            check reads. If you don't plan to re-expose templates from your
+            project, delete all three.
           '';
         };
 
@@ -93,9 +142,14 @@
           welcomeText = ''
             # CI-only template
 
-            Drops `.github/workflows/ci.yaml` into your project. Assumes
-            your flake exposes a `devShells.default` that provides
-            `cargo` and `clippy`.
+            Drops `.github/workflows/ci.yaml` into your project. It builds
+            `.#checks.x86_64-linux.git-hooks`, `.#checks.x86_64-linux.cargo-test`,
+            and `.#checks.x86_64-linux.cargo-clippy`, so your flake needs to
+            expose those three checks -- which it does if you started from the
+            `rust` template.
+
+            The Cachix step is `continue-on-error`, so a fork PR without
+            `CACHIX_AUTH_TOKEN` still builds against cache.nixos.org.
           '';
         };
 
@@ -107,18 +161,30 @@
 
             Drops `flake.nix` and `.envrc` into an existing Rust project.
             The flake consumes `dataclique/rust.nix` as an input and
-            re-exposes its dev shell as `devShells.default`.
+            re-exposes its dev shell as `devShells.default` -- so you get
+            the toolchain, `but`, and the pre-commit hooks without copying
+            any of it.
 
             Next steps:
               1. `direnv allow` (or `nix develop --impure`) to enter the dev shell.
               2. `cargo build` to verify the toolchain.
+
+            To build your crate with crane too, call
+            `rust-nix.lib.<system>.mkRustPackages { root = ./.; pname = "..."; }`
+            and expose the result as `packages` and `checks`.
           '';
         };
       };
     };
 
   nixConfig = {
-    extra-trusted-public-keys = "devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=";
-    extra-substituters = "https://devenv.cachix.org";
+    extra-substituters = [
+      "https://devenv.cachix.org"
+      "https://nix-community.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw="
+      "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
+    ];
   };
 }
