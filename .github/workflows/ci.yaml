@@ -1,41 +1,115 @@
-name: "CI"
+name: CI
 
 on:
-  workflow_dispatch:
   pull_request:
-  push:
-    branches:
-    - master
+  merge_group:
+  workflow_dispatch:
+
+# A new push to the same ref supersedes any run still in flight; master runs
+# are never cancelled so the cache-warming pushes always complete.
+concurrency:
+  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+permissions:
+  contents: read
+
+# Nix is installed via nix-quick-install-action; the shared `data-cartel-public`
+# Cachix (cachix-action) and the per-runner nix store (cache-nix-action) are
+# warmed before any `nix` build, and built paths are pushed back to the Cachix.
+# This replaces the DeterminateSystems installer + magic-nix-cache, whose hosted
+# cache throttled CI with HTTP 418 responses. cachix-action is continue-on-error
+# so a fork PR (no CACHIX_AUTH_TOKEN) skips the cache and still builds against
+# cache.nixos.org without failing the job.
 
 jobs:
-  checks:
-    permissions:
-      checks: write
-      contents: read
-      id-token: write
-      packages: write
-      pull-requests: write
-      repository-projects: write
-
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-
+  hooks:
+    runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v5
-    - uses: DeterminateSystems/nix-installer-action@main
-    - uses: DeterminateSystems/magic-nix-cache-action@main
-    - uses: DeterminateSystems/flake-checker-action@main
+      - uses: actions/checkout@v4
 
-    - name: Run Flake checks
-      run: nix -v flake check --show-trace --impure --accept-flake-config
+      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
+        with:
+          nix_version: "2.31.2"
+          nix_conf: |
+            accept-flake-config = true
+            fallback = true
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            keep-env-derivations = true
+            keep-outputs = true
 
-    - name: cargo build
-      run: nix develop --impure --accept-flake-config -c cargo build --all-targets --locked
+      - uses: cachix/cachix-action@ad2ddac53f961de1989924296a1f236fcfbaa4fc # v15
+        continue-on-error: true
+        with:
+          name: data-cartel-public
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
-    - name: cargo test
-      run: nix develop --impure --accept-flake-config -c cargo test --all-targets --locked
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-hooks-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-hooks-
+          gc-max-store-size-linux: 5G
 
-    - name: cargo clippy
-      run: nix develop --impure --accept-flake-config -c cargo clippy --all-targets --locked -- -D warnings
+      - name: Pre-commit hooks
+        # Pure flake check -- runs the same hooks without the heavy devShell
+        run: nix build -L --log-format raw .#checks.x86_64-linux.git-hooks
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
+        with:
+          nix_version: "2.31.2"
+          nix_conf: |
+            accept-flake-config = true
+            fallback = true
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            keep-env-derivations = true
+            keep-outputs = true
+
+      - uses: cachix/cachix-action@ad2ddac53f961de1989924296a1f236fcfbaa4fc # v15
+        continue-on-error: true
+        with:
+          name: data-cartel-public
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-rust-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-rust-
+          gc-max-store-size-linux: 5G
+
+      - name: Test
+        run: nix build -L --log-format raw .#checks.x86_64-linux.cargo-test
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
+        with:
+          nix_version: "2.31.2"
+          nix_conf: |
+            accept-flake-config = true
+            fallback = true
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            keep-env-derivations = true
+            keep-outputs = true
+
+      - uses: cachix/cachix-action@ad2ddac53f961de1989924296a1f236fcfbaa4fc # v15
+        continue-on-error: true
+        with:
+          name: data-cartel-public
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-rust-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-rust-
+          gc-max-store-size-linux: 5G
+
+      - name: Clippy
+        run: nix build -L --log-format raw .#checks.x86_64-linux.cargo-clippy
